@@ -48,31 +48,51 @@ class TwitterEventDetector():
         read a SubWindow from a file
         all tweets in given file belong to the subwindow
         """
+        segments, tweet_count = self.load_subwindow_data(file_path)
+
+        sw = SubWindow(segments, tweet_count)
+        return sw
+
+    def read_subwindows(self, file_paths):
+        """
+        read a SubWindow from a multiple files
+        all tweets in given file belong to the subwindow
+        """
         segments = {}
         tweet_count = 0
+        for file_path in file_paths:
+            segments, tweet_count = self.load_subwindow_data(file_path, segments=segments, tweet_count=tweet_count)
+        sw = SubWindow(segments, tweet_count)
+        return sw
+
+    def load_subwindow_data(self, file_path, segments=None, tweet_count=0):
+        if segments is None:
+            segments = {}
+        # tweet_count = 0
         f = open(file_path, 'r')
         for line in f:
-            line = line.replace('\n','')
+            line = line.replace('\n', '')
             if line == '': continue
             json_tweet = json.loads(line)
             tweet_count += 1
+            tweet_id = json_tweet['tweet_id']
             user_id = json_tweet['user']['id']
             retweet_count = json_tweet['retweet_count']
             followers_count = json_tweet['user']['followers_count']
             segmentation = self.segmenter.tweet_segmentation(json_tweet)
-            tweet_text = ' '.join(list(OrderedDict.fromkeys(segmentation))) # because of hashtag_wt, some segments might be multiple in tweet text after joining so remove them
-            tweet_text = ''.join([c for c in tweet_text if ord(c)<256]) # dont know why but some non ascii chars like \u0441='c'still survived segmentation!!!
+            tweet_text = ' '.join(list(OrderedDict.fromkeys(
+                segmentation)))  # because of hashtag_wt, some segments might be multiple in tweet text after joining so remove them
+            tweet_text = ''.join([c for c in tweet_text if
+                                  ord(c) < 256])  # dont know why but some non ascii chars like \u0441='c'still survived segmentation!!!
             for seg in segmentation:
                 if not seg in segments:
                     new_seg = Segment(seg)
                     new_seg.newsworthiness = self.get_segment_newsworthiness(seg)
                     segments[seg] = new_seg
-                segments[seg].add_tweet(user_id, tweet_text, retweet_count, followers_count)
+                segments[seg].add_tweet(user_id, tweet_text, retweet_count, followers_count, tweet_id)
         f.close()
-        
-        sw = SubWindow(segments, tweet_count)
-        return sw
-    
+        return segments, tweet_count
+
     def get_segment_newsworthiness(self, seg):
         """
         return max exp(Q(l))-1 from all sub phrases 'l' in seg(string)

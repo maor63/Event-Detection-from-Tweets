@@ -72,11 +72,13 @@ class TimeWindow:
     
     def get_tweets_containing_segment(self, seg_name):
         tweets = []
+        tweet_ids = []
         for sw in self.subwindows:
             segment = sw.segments.get(seg_name,None)
             if not segment == None:
                 tweets += segment.tweets
-        return tweets
+                tweet_ids += segment.tweet_ids
+        return tweets, tweet_ids
         
     def advance_window(self, next_subwindow):
         print('Advancing Time Window')

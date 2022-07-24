@@ -1,5 +1,5 @@
 import os
-
+import pandas as pd
 from EventSegmentClusterer import get_events, get_seg_similarity
 from TimeWindow import TimeWindow
 from TwitterEventDetector import TwitterEventDetector
@@ -8,8 +8,8 @@ from TwitterEventDetector import TwitterEventDetector
 # Parameters
 original_tweet_dir = 'data/original_tweets/' # end with '/'
 clean_tweet_dir = 'data/cleaned_tweets/without_retweets/' # end with '/'
-subwindow_dir = 'data/cleaned_tweets/without_retweets/2012-10-12/' # each file is a subwindow in this folder
-event_output_dir = 'results/2012-10-12/'
+subwindow_dir = 'data/cleaned_tweets/without_retweets/2012-10-10/' # each file is a subwindow in this folder
+event_output_dir = 'results/2012-10-10/'
 wiki_titles_file = 'data/enwiki-titles-unstemmed.txt'
 seg_prob_file = 'data/seg_prob_2012_Oct_11-22.json'
 wiki_Qs_file = 'data/WikiQsEng_non_zero_processed.json'
@@ -28,7 +28,7 @@ ted = TwitterEventDetector(wiki_titles_file, seg_prob_file, wiki_Qs_file, remove
                            hashtag_wt, use_retweet_count, use_followers_count, default_seg_prob, entities_only)
 
 # Tweet Cleaning
-#ted.clean_tweets_in_directory(original_tweet_dir, clean_tweet_dir)
+# ted.clean_tweets_in_directory(original_tweet_dir, clean_tweet_dir)
 
 # Segment tweets and create TimeWindow
 print('\nReading SubWindows')
@@ -69,8 +69,17 @@ for e, event_worthiness in events:
     for seg_name in e:
         print(seg_name) 
         f.write('SEGMENT:' + seg_name+'\n')
-        for text in set(tw.get_tweets_containing_segment(seg_name)):
+        tweets, tweet_ids = tw.get_tweets_containing_segment(seg_name)
+        for text in set(tweets):
             f.write(text+'\n')
         f.write('-----------------------------------------------------------\n')
     f.close()
 
+dfs = []
+for event_no, (e, event_worthiness) in enumerate(events):
+    for seg_name in e:
+        tweets, tweet_ids = tw.get_tweets_containing_segment(seg_name)
+        df = pd.DataFrame(zip(tweets, tweet_ids), columns=['text', 'tweet_id'])
+        df['label'] = event_no
+        dfs.append(df)
+pd.concat(dfs, axis=0).to_csv(event_output_dir + 'events.csv', index=False)
