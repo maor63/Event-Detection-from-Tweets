@@ -12,36 +12,37 @@ def chunker(seq, size):
 
 
 def main():
-    # start_date = datetime.datetime.strptime('2012-10-11', "%Y-%m-%d")
-    start_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
-    end_date = datetime.datetime.strptime('2012-10-22', "%Y-%m-%d")
+    start_date = datetime.datetime.strptime('2012-10-11', "%Y-%m-%d")
+    # start_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
+    end_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
+    # end_date = datetime.datetime.strptime('2012-10-22', "%Y-%m-%d")
     day_count = (end_date - start_date).days
     current_date = start_date
-    event_no = 36
-    label_no = 36
+    event_no = 0
+    label_no = 0
+    # Parameters
+    original_tweet_dir = 'data/original_tweets/'  # end with '/'
+    clean_tweet_dir = 'data/cleaned_tweets/without_retweets/'  # end with '/'
+    wiki_titles_file = 'data/enwiki-titles-unstemmed.txt'
+    seg_prob_file = 'data/seg_prob_2012_Oct_11-22.json'
+    wiki_Qs_file = 'data/WikiQsEng_non_zero_processed.json'
+    remove_retweets = True
+    max_segment_length = 4
+    hashtag_wt = 3
+    entities_only = False  # False --> use #tag and @name only for event detection
+    default_seg_prob = 0.0000001  # for unknown segments
+    use_retweet_count = True
+    use_followers_count = True
+    n_neighbors = 4
+    threshold = 4  # for news_worthiness
+    subwindow_size = 2
+
     for d in range(day_count):
         date_str = current_date.strftime("%Y-%m-%d")
         print('Current date:', date_str)
-        # Parameters
-        original_tweet_dir = 'data/original_tweets/'  # end with '/'
-        clean_tweet_dir = 'data/cleaned_tweets/without_retweets/'  # end with '/'
-        wiki_titles_file = 'data/enwiki-titles-unstemmed.txt'
-        seg_prob_file = 'data/seg_prob_2012_Oct_11-22.json'
-        wiki_Qs_file = 'data/WikiQsEng_non_zero_processed.json'
 
         subwindow_dir = f'data/cleaned_tweets/without_retweets/{date_str}/'  # each file is a subwindow in this folder
         event_output_dir = f'results/{date_str}/'
-
-        remove_retweets = True
-        max_segment_length = 4
-        hashtag_wt = 3
-        entities_only = False  # False --> use #tag and @name only for event detection
-        default_seg_prob = 0.0000001  # for unknown segments
-        use_retweet_count = True
-        use_followers_count = True
-        n_neighbors = 4
-        threshold = 4  # for news_worthiness
-        subwindow_size = 2
 
         start = timeit.default_timer()
         ted = TwitterEventDetector(wiki_titles_file, seg_prob_file, wiki_Qs_file, remove_retweets, max_segment_length,
@@ -53,12 +54,6 @@ def main():
         # Segment tweets and create TimeWindow
         print(f'\nReading SubWindows size: {subwindow_size}')
         subwindow_files = [f.name for f in os.scandir(subwindow_dir) if f.is_file()]
-
-        # subwindows = []
-        # for subwindow_names in chunker(subwindow_files, subwindow_size):
-        #     sw = ted.read_subwindows([subwindow_dir + subwindow_name for subwindow_name in subwindow_names])
-        #     subwindows.append(sw)
-        # print(f'Done loding {len(subwindows)} subwindows\n')
 
         for subwindow_names in chunker(subwindow_files, subwindow_size):
             subwindows = []

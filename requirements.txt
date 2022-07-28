@@ -1,3 +1,9 @@
-networkx==2.3
-nltk==3.4.5
-scikit_learn==0.23.1
+networkx
+nltk
+scikit_learn
+tqdm
+pandas
+scipy
+unidecode
+datasketch
+gensim

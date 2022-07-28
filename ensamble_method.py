@@ -1,6 +1,5 @@
 import os
 import timeit
-
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
@@ -34,6 +33,9 @@ nltk.download('punkt')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('maxent_ne_chunker')
 nltk.download('words')
+
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
 def run_lsh(texts, threshold=0.7, num_perm=128):
@@ -72,11 +74,14 @@ def read_tweets_from_file(file_path):
 
 def main():
     start_date = datetime.datetime.strptime('2012-10-11', "%Y-%m-%d")
-    end_date = datetime.datetime.strptime('2012-10-22', "%Y-%m-%d")
+    end_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
     day_count = (end_date - start_date).days
     current_date = start_date
+    output_dir = 'ensemble_kmeans_2000_DBSCAN_0-4'
     event_no = 0
     label_no = 0
+    subwindow_size = 2
+    n_clusters = 2000
     all_preds = []
     all_tweets = []
     for d in range(day_count):
@@ -84,40 +89,33 @@ def main():
         date_str = current_date.strftime("%Y-%m-%d")
         print('Current date:', date_str)
         subwindow_dir = f'data/cleaned_tweets/without_retweets/{date_str}/'
-        event_output_dir = f'ensemble_results/{date_str}/'
+        event_output_dir = f'{output_dir}/{date_str}/'
         subwindow_files = [f.name for f in os.scandir(subwindow_dir) if f.is_file()]
-        for subwindow_name in subwindow_files:
-            tweets = read_tweets_from_file(subwindow_dir + subwindow_name)
+
+        for idx, subwindow_names in enumerate(chunker(subwindow_files, subwindow_size)):
+            print(idx)
+            tweets = []
+            for subwindow_name in subwindow_names:
+                tweets += read_tweets_from_file(subwindow_dir + subwindow_name)
             tweets_df = pd.DataFrame(tweets)
             texts = tweets_df.text
             tweet_ids = tweets_df.tweet_id.tolist()
-            preds = run_lsh(texts, threshold=0.5, num_perm=64)
-            m = defaultdict(list)
-            for i, p in enumerate(preds):
-                m[p].append(i)
+            old_preds = run_lsh(texts, threshold=0.5, num_perm=64)
+            # clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, verbose=0).fit(X)
+            clustering_method = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, verbose=0)
+            new_preds1 = cluster_tweets(clustering_method, old_preds, texts)
 
-            representative_m = {}
-            for l, vals in m.items():
-                representative_m[l] = texts[max(vals, key=lambda x: len(texts[x].split()))]
+            clustering_method = DBSCAN(eps=0.6, min_samples=1, metric='cosine')
+            new_preds2 = cluster_tweets(clustering_method, new_preds1, texts)
 
-            # X = sentence_transformer.encode(list(representative_m.values()))
-            X = tf_idf_vecs(representative_m.values())
-            clustering = MiniBatchKMeans(n_clusters=500, random_state=0, verbose=0).fit(X)
-            ftd_preds = clustering.labels_
-
-            old_to_new_labels = {}
-            for old_l, new_l in zip(representative_m.keys(), ftd_preds):
-                if new_l != -1:
-                    old_to_new_labels[old_l] = new_l
-            new_preds = [old_to_new_labels.get(p, p) for p in preds]
-            new_preds = list(np.array(new_preds) + event_no)
-            all_preds += new_preds
+            new_preds2 = list(np.array(new_preds2) + event_no)
+            all_preds += new_preds2
             event_no = len(set(all_preds))
             all_tweets += tweet_ids
 
             results_df = pd.DataFrame()
             results_df['tweet_id'] = tweet_ids
-            results_df['label'] = new_preds
+            results_df['label'] = new_preds2
 
             if os.path.exists(event_output_dir + 'events.csv'):
                 results_df.to_csv(event_output_dir + 'events.csv', index=False, header=None, mode='a', encoding='utf-8')
@@ -129,6 +127,38 @@ def main():
         stop = timeit.default_timer()
         print('Time in minutes: ', (stop - start) / 60)
         current_date = current_date + datetime.timedelta(days=1)
+
+
+def cluster_tweets(clustering_method, old_preds, texts):
+    cluster_representative = get_cluster_representative_text(old_preds, texts)
+    # X = sentence_transformer.encode(list(representative_m.values()))
+    X = tf_idf_vecs(cluster_representative.values(), max_features=5000)
+    cluster_start = timeit.default_timer()
+    clustering = clustering_method.fit(X)
+    sub_preds = clustering.labels_
+    cluster_end = timeit.default_timer()
+    print('cluster time sec:', cluster_end - cluster_start)
+    new_preds = update_clusters(sub_preds, old_preds, cluster_representative)
+    return new_preds
+
+
+def update_clusters(new_preds, old_preds, cluster_representative):
+    old_to_new_labels = {}
+    base = len(cluster_representative.keys())
+    for old_l, new_l in zip(cluster_representative.keys(), new_preds):
+        if new_l != -1:
+            old_to_new_labels[old_l] = base + new_l
+    return [old_to_new_labels.get(p, p) for p in old_preds]
+
+
+def get_cluster_representative_text(preds, texts):
+    m = defaultdict(list)
+    for i, p in enumerate(preds):
+        m[p].append(i)
+    representative_m = {}
+    for l, vals in m.items():
+        representative_m[l] = texts[max(vals, key=lambda x: len(texts[x].split()))]
+    return representative_m
 
 
 if __name__ == '__main__':

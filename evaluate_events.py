@@ -1,10 +1,13 @@
 import datetime
 import json
 import os
-
+import numpy as np
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import *
 from collections import defaultdict
+from sklearn.metrics import pairwise_distances
+from tqdm.auto import tqdm
 
 from TwitterEventDetector import TwitterEventDetector
 
@@ -50,15 +53,18 @@ def print_statistics(tweet_ids, new_preds2, tweets_with_label):
 
     rows = []
     tweets_with_labels = 0
+    tweets_without_labels = 0
     label_to_tweets = defaultdict(list)
+    all_preds = set(results['tweet_id'])
     for t, c in zip(results['tweet_id'], results['pred']):
         if t in tweet_with_label_set:
             rows.append([t, tweet_with_label_set[t], c])
             tweets_with_labels += 1
             label_to_tweets[tweet_with_label_set[t]].append(t)
-        # else:
-        #     label_to_tweets[-1].append(t)
-        #     rows.append([t, -1, c])
+    for t in tweet_with_label_set:
+        if t not in all_preds:
+            rows.append([t, tweet_with_label_set[t], -1])
+            tweets_without_labels += 1
 
     output = pd.DataFrame(rows, columns=['tweet_id', 'label', 'pred'])
 
@@ -73,7 +79,7 @@ def print_statistics(tweet_ids, new_preds2, tweets_with_label):
     print('micro_p:', macro_p)
     print('micro_r:', macro_r)
     print('micro_f1:', macro_f1)
-    print('#labeled tweets:', tweets_with_labels, )
+    print('#labeled tweets:', tweets_with_labels, '#unlabeled tweets:', tweets_without_labels)
     print('#labels:', len(set(output['label'])), '#preds:', len(set(output['pred'])))
 
 
@@ -83,6 +89,28 @@ def read_tweets_from_file(file_path):
         for line in f:
             input_tweets.append(json.loads(line))
     return input_tweets
+
+
+def load_tweets_generator(start_date_str, end_date_str):
+    start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d")
+    day_count = (end_date - start_date).days
+    current_date = start_date
+
+    tweets_with_label = pd.read_csv('data/cleaned_tweets/event_2012_relevant_tweets.tsv',
+                                    sep='\t', header=None, names=['label', 'tweet_id'])
+    tweets_with_label = tweets_with_label.drop_duplicates()
+
+    relevant_tweet_ids = set()
+    tweet_with_labels = set(tweets_with_label['tweet_id'].astype(str))
+    for d in range(day_count):
+        date_str = current_date.strftime("%Y-%m-%d")
+        print(date_str)
+        subwindow_dir = f'data/cleaned_tweets/without_retweets/{date_str}/'
+        subwindow_files = [f.name for f in os.scandir(subwindow_dir) if f.is_file()]
+        for subwindow_name in subwindow_files:
+            tweet_jsons = read_tweets_from_file(subwindow_dir + subwindow_name)
+            yield tweet_jsons
 
 
 def create_labels_file(start_date_str, end_date_str):
@@ -135,8 +163,35 @@ def load_event_files(start_date_str='2012-10-11', end_date_str='2012-10-22', fol
     return pd.concat(dfs, axis=0)
 
 
+def test_event_average_distance(start_date_str, end_date_str):
+    tweets_with_label = pd.read_csv('data/cleaned_tweets/event_2012_relevant_tweets.tsv',
+                                    sep='\t', header=None, names=['label', 'tweet_id'])
+    tweets_with_label = tweets_with_label.drop_duplicates()
+    tweet_with_label_set = dict(zip(tweets_with_label['tweet_id'].astype(str), tweets_with_label['label']))
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=5000)
+    label_to_tweets = defaultdict(list)
+    texts = []
+    for tweets_json in tqdm(load_tweets_generator(start_date_str, end_date_str), total=24):
+        texts += pd.DataFrame(tweets_json).text.tolist()
+        for tweet_json in tweets_json:
+            if tweet_json['tweet_id'] in tweet_with_label_set:
+                label_to_tweets[tweet_with_label_set[tweet_json['tweet_id']]].append(tweet_json['text'])
+    vectorizer.fit(texts)
+    euc_distances = []
+    cosine_distances = []
+    for l, texts in label_to_tweets.items():
+        X = vectorizer.transform(texts)
+        avg_euc_dist = pairwise_distances(X, X.mean(axis=0), metric='euclidean').mean()
+        avg_cosine_dist = pairwise_distances(X, X.mean(axis=0), metric='cosine').mean()
+        euc_distances.append(avg_euc_dist)
+        cosine_distances.append(avg_cosine_dist)
+    print('Euclidean distance:', np.mean(euc_distances), 'STD:', np.std(euc_distances))
+    print('Cosine distance:', np.mean(cosine_distances), 'STD:', np.std(cosine_distances))
+
 start_date_str = '2012-10-11'
-end_date_str = '2012-10-22'
+end_date_str = '2012-10-12'
+# test_event_average_distance(start_date_str, end_date_str)
+
 # create_labels_file(start_date_str, end_date_str)
 tweets_with_label = pd.read_csv(f'event_2012_relevant_tweets_{start_date_str}_{end_date_str}.tsv',
                                 sep='\t', header=None, names=['label', 'tweet_id'])
@@ -144,7 +199,9 @@ tweets_with_label = pd.read_csv(f'event_2012_relevant_tweets_{start_date_str}_{e
 #                                     sep='\t', header=None, names=['label', 'tweet_id'])
 # tweets_with_label = tweets_with_label.drop_duplicates()
 # results_df = pd.read_csv('results/2012-10-10/events.csv')
-results_df = load_event_files(start_date_str=start_date_str, end_date_str=end_date_str, folder_name='ensemble_results')
+results_df = load_event_files(start_date_str=start_date_str, end_date_str=end_date_str,
+                              folder_name='ensemble_kmeans_2000_DBSCAN_0-4')
+results_df = results_df.drop_duplicates(['tweet_id'], keep='first')
 tweet_ids = results_df['tweet_id'].astype(str)
 new_preds2 = results_df['label']
 print_statistics(tweet_ids, new_preds2, tweets_with_label)

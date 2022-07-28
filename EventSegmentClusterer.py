@@ -24,7 +24,9 @@ def get_events(bursty_segment_weights, segment_newsworthiness, seg_sim, n_neighb
     
     clusters = [] # each cluster is a tuple of list(segments) and event_newsworthiness
     max_event_worthiness = 0
-    for sg in nx.connected_component_subgraphs(G):
+    # for sg in nx.connected_component_subgraphs(G):
+    for c in nx.connected_components(G):
+        sg = G.subgraph(c)
         n = len(sg.nodes)
         if(n < 1.5*n_neighbors): continue # remove clusters with size < 1.5*n_neighbors
         
