@@ -27,6 +27,9 @@ from datasketch import MinHash, MinHashLSH
 from gensim.test.utils import common_texts
 from gensim.corpora.dictionary import Dictionary
 from gensim.models.ldamulticore import LdaMulticore
+# from sentence_transformers import SentenceTransformer
+from fast_sentence_transformers import FastSentenceTransformer as SentenceTransformer
+
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -77,7 +80,7 @@ def main():
     end_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
     day_count = (end_date - start_date).days
     current_date = start_date
-    output_dir = 'ensemble_lsh0-7_kmeans'
+    output_dir = 'ensemble_lsh0-7_kmeans_2000_agg_0-5'
     event_no = 0
     label_no = 0
     eps = 0.5
@@ -109,13 +112,14 @@ def main():
             old_preds = run_lsh(texts, threshold=0.7, num_perm=64)
             # clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, verbose=0).fit(X)
             clustering_method = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, verbose=0)
-            new_preds1 = cluster_tweets(clustering_method, old_preds, texts)
+            new_preds1 = cluster_tweets(clustering_method, old_preds, texts, vec_type='tf-idf')
 
-            # clustering_method = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
-            # new_preds2 = cluster_tweets(clustering_method, old_preds, texts)
+            clustering_method = AgglomerativeClustering(affinity='cosine', n_clusters=None, linkage='average',
+                                                        distance_threshold=0.5)
+            new_preds2 = cluster_tweets(clustering_method, new_preds1, texts, vec_type='bert')
 
-            # new_preds2 = list(np.array(new_preds2) + event_no)
-            new_preds2 = list(np.array(new_preds1) + event_no)
+            new_preds2 = list(np.array(new_preds2) + event_no)
+            # new_preds2 = list(np.array(new_preds1) + event_no)
             all_preds += new_preds2
             event_no = max(all_preds) + 1
             all_tweets += tweet_ids
@@ -139,12 +143,17 @@ def main():
         current_date = current_date + datetime.timedelta(days=1)
 
 
-def cluster_tweets(clustering_method, old_preds, texts):
+def cluster_tweets(clustering_method, old_preds, texts, vec_type='tf-idf'):
     cluster_representative = get_cluster_representative_text(old_preds, texts)
-    # X = sentence_transformer.encode(list(representative_m.values()))
-    X = tf_idf_vecs(cluster_representative.values(), max_features=None)
+    if vec_type == 'tf-idf':
+        X = tf_idf_vecs(cluster_representative.values(), max_features=5000)
+    else:
+        X = sentence_transformer.encode(list(cluster_representative.values()))
     cluster_start = timeit.default_timer()
-    clustering = clustering_method.fit(X)
+    try:
+        clustering = clustering_method.fit(X)
+    except:
+        clustering = clustering_method.fit(X.A)
     sub_preds = clustering.labels_
     cluster_end = timeit.default_timer()
     print('cluster time sec:', cluster_end - cluster_start)
@@ -172,4 +181,5 @@ def get_cluster_representative_text(preds, texts):
 
 
 if __name__ == '__main__':
+    sentence_transformer = SentenceTransformer('paraphrase-MiniLM-L3-v2')
     main()
