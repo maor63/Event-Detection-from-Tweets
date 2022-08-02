@@ -64,7 +64,7 @@ class EntitySimilarityComputer:
             vocab.update(tweet['entities']['hashtags'])
             corpus.append(tweet['text'])
         # vectorizer = CountVectorizer(vocabulary=vocab, ngram_range=(1, 2), analyzer='word', lowercase=False)
-        vectorizer = CountVectorizer(vocabulary=vocab, analyzer='word', lowercase=True)
+        vectorizer = CountVectorizer(vocabulary=vocab, analyzer='word', lowercase=False)
         tweet_vecs = vectorizer.fit_transform(corpus)
         X = np.transpose(tweet_vecs)
         similarities = cosine_similarity(X)
@@ -115,7 +115,7 @@ class ClusterLinker:
             vocab.update(tweet2['named_entities'])
             corpus2.append(tweet2['text'])
 
-        vectorizer = CountVectorizer(vocabulary=vocab, analyzer='word', lowercase=True)
+        vectorizer = CountVectorizer(vocabulary=vocab, analyzer='word', lowercase=False)
         X = vectorizer.transform(corpus1)
         Y = vectorizer.transform(corpus2)
 
@@ -155,6 +155,11 @@ def read_tweets_from_file(file_path):
     return input_tweets
 
 
+def write_tweets_to_file(file_path, tweets):
+    with open(file_path, 'a') as filehandle:
+        filehandle.writelines("%s\n" % json.dumps(j) for j in tweets)
+
+
 def get_clustering_vectors(clustering, size):
     vecs = []
     for c, entities_idx in clustering.items():
@@ -169,17 +174,18 @@ def main():
     end_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
     day_count = (end_date - start_date).days
     current_date = start_date
-    subwindow_size = 2
+    subwindow_size = 1
 
     S = 0.1
     R = 1.0
+    C = 0.85
     output_dir = 'KDD2019Fedoryszak/entity_thresh_0-1'
     total_tweet_clusters = []
 
     entity_extractor = EntityExtractor()
     entity_similarity_computer = EntitySimilarityComputer()
     entity_clusterer = EntityCluster(threshold=S, resolution=R)
-    cluster_linker = ClusterLinker(threshold=S)
+    cluster_linker = ClusterLinker(threshold=C)
     all_preds = []
     last_tweets = None
     clustering_last = None
@@ -191,58 +197,59 @@ def main():
         event_output_dir = f'{output_dir}/{date_str}/'
         subwindow_files = [f.name for f in os.scandir(subwindow_dir) if f.is_file()]
 
+        output_event_csv = event_output_dir + f'events_S{S}_C{C}_1hour.csv'
+
         for idx, subwindow_names in enumerate(chunker(subwindow_files, subwindow_size)):
             print(idx)
-            tweets = []
-            for subwindow_name in subwindow_names:
-                tweets += read_tweets_from_file(subwindow_dir + subwindow_name)
-
             processed_tweets_file_name = f'tweets_{"-".join([name.replace(".json", "") for name in subwindow_names])}.pickle'
             if os.path.exists(event_output_dir + processed_tweets_file_name):
-                with open(event_output_dir + processed_tweets_file_name, 'rb') as handle:
-                    processed_tweets = pickle.load(handle)
+                processed_tweets = read_tweets_from_file(event_output_dir + processed_tweets_file_name)
             else:
-                tweets_df = pd.DataFrame(tweets)
-                tweet_ids = tweets_df.tweet_id.tolist()
+                tweets = []
+                for subwindow_name in subwindow_names:
+                    tweets += read_tweets_from_file(subwindow_dir + subwindow_name)
                 processed_tweets = entity_extractor.apply(tweets)
+                write_tweets_to_file(event_output_dir + processed_tweets_file_name, processed_tweets)
 
-                with open(event_output_dir + processed_tweets_file_name, 'wb') as handle:
-                    pickle.dump(processed_tweets, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            for tweet_chunk in chunker(processed_tweets, 10_000):
+                tweets_df = pd.DataFrame(tweet_chunk)
+                tweet_ids = tweets_df.tweet_id.tolist()
+                similarities, entities, tweet_vecs = entity_similarity_computer.apply(tweet_chunk)
+                partition = entity_clusterer.cluster(similarities)
 
-            similarities, entities, tweet_vecs = entity_similarity_computer.apply(processed_tweets)
-            partition = entity_clusterer.cluster(similarities)
+                start_from = max(all_preds + [0])
+                clustering_current = partition_to_cluster(partition, start_from=start_from)
 
-            start_from = len(set(all_preds))
-            clustering_current = partition_to_cluster(partition, start_from=start_from)
+                if clustering_last is not None:
+                    mapping = cluster_linker.link(clustering_last, clustering_current, tweets_last, processed_tweets)
 
-            if clustering_last is not None:
-                mapping = cluster_linker.link(clustering_last, clustering_current, tweets_last, tweets)
+                    clustering_current_keys = list(clustering_current.keys())
+                    for c1, c2 in mapping.items():
+                        # print(f'{c2} -> {c1}')
+                        clustering_current[list(clustering_last.keys())[c1]] = clustering_current.pop(
+                            clustering_current_keys[c2])
+                    print(mapping)
 
-                clustering_current_keys = list(clustering_current.keys())
-                for c1, c2 in mapping.items():
-                    # print(f'{c2} -> {c1}')
-                    clustering_current[list(clustering_last.keys())[c1]] = clustering_current.pop(
-                        clustering_current_keys[c2])
-                print(mapping)
+                clustering_vecs = get_clustering_vectors(clustering_current, len(entities))
+                tweet_cluster_sim = cosine_similarity(tweet_vecs, clustering_vecs)
+                tweet_clusters = tweet_cluster_sim.argmax(axis=1) + start_from
 
-            clustering_vecs = get_clustering_vectors(clustering_current, len(entities))
-            tweet_cluster_sim = cosine_similarity(tweet_vecs, clustering_vecs)
-            tweet_clusters = tweet_cluster_sim.argmax(axis=1) + start_from
+                all_preds += list(tweet_clusters)
+                results_df = pd.DataFrame()
+                results_df['tweet_id'] = tweet_ids
+                results_df['label'] = tweet_clusters
 
-            all_preds += list(tweet_clusters)
-            results_df = pd.DataFrame()
-            results_df['tweet_id'] = tweet_ids
-            results_df['label'] = tweet_clusters
+                clustering_last = clustering_current
+                tweets_last = processed_tweets
 
-            clustering_last = clustering_current
-            tweets_last = tweets
-
-            if os.path.exists(event_output_dir + 'events.csv'):
-                results_df.to_csv(event_output_dir + 'events.csv', index=False, header=None, mode='a', encoding='utf-8')
-            else:
-                if not os.path.exists(event_output_dir):
-                    os.makedirs(event_output_dir)
-                results_df.to_csv(event_output_dir + 'events.csv', index=False)
+                if os.path.exists(output_event_csv):
+                    results_df.to_csv(output_event_csv, index=False, header=None, mode='a',
+                                      encoding='utf-8')
+                else:
+                    if not os.path.exists(event_output_dir):
+                        os.makedirs(event_output_dir)
+                    results_df.to_csv(output_event_csv, index=False)
+            break
 
         stop = timeit.default_timer()
         print('Time in minutes: ', (stop - start) / 60)

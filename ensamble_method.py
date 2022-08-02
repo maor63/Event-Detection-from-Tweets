@@ -77,9 +77,12 @@ def main():
     end_date = datetime.datetime.strptime('2012-10-12', "%Y-%m-%d")
     day_count = (end_date - start_date).days
     current_date = start_date
-    output_dir = 'ensemble_kmeans_2000_DBSCAN_0-4'
+    output_dir = 'ensemble_lsh0-7_kmeans'
     event_no = 0
     label_no = 0
+    eps = 0.5
+    min_samples = 5
+
     subwindow_size = 2
     n_clusters = 2000
     all_preds = []
@@ -91,6 +94,9 @@ def main():
         subwindow_dir = f'data/cleaned_tweets/without_retweets/{date_str}/'
         event_output_dir = f'{output_dir}/{date_str}/'
         subwindow_files = [f.name for f in os.scandir(subwindow_dir) if f.is_file()]
+        csv_name = event_output_dir + f'events_n_clusters{n_clusters}.csv'
+        if os.path.exists(csv_name):
+            os.remove(csv_name)
 
         for idx, subwindow_names in enumerate(chunker(subwindow_files, subwindow_size)):
             print(idx)
@@ -100,29 +106,33 @@ def main():
             tweets_df = pd.DataFrame(tweets)
             texts = tweets_df.text
             tweet_ids = tweets_df.tweet_id.tolist()
-            old_preds = run_lsh(texts, threshold=0.5, num_perm=64)
+            old_preds = run_lsh(texts, threshold=0.7, num_perm=64)
             # clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, verbose=0).fit(X)
             clustering_method = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, verbose=0)
             new_preds1 = cluster_tweets(clustering_method, old_preds, texts)
 
-            clustering_method = DBSCAN(eps=0.6, min_samples=1, metric='cosine')
-            new_preds2 = cluster_tweets(clustering_method, new_preds1, texts)
+            # clustering_method = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
+            # new_preds2 = cluster_tweets(clustering_method, old_preds, texts)
 
-            new_preds2 = list(np.array(new_preds2) + event_no)
+            # new_preds2 = list(np.array(new_preds2) + event_no)
+            new_preds2 = list(np.array(new_preds1) + event_no)
             all_preds += new_preds2
-            event_no = len(set(all_preds))
+            event_no = max(all_preds) + 1
             all_tweets += tweet_ids
 
             results_df = pd.DataFrame()
             results_df['tweet_id'] = tweet_ids
             results_df['label'] = new_preds2
+            results_df['text'] = texts.str.replace('\n', ' ')
 
-            if os.path.exists(event_output_dir + 'events.csv'):
-                results_df.to_csv(event_output_dir + 'events.csv', index=False, header=None, mode='a', encoding='utf-8')
+            # csv_name = event_output_dir + f'events_eps{eps}_{min_samples}.csv'
+
+            if os.path.exists(csv_name):
+                results_df.to_csv(csv_name, index=False, header=None, mode='a', encoding='utf-8')
             else:
                 if not os.path.exists(event_output_dir):
                     os.makedirs(event_output_dir)
-                results_df.to_csv(event_output_dir + 'events.csv', index=False)
+                results_df.to_csv(csv_name, index=False)
 
         stop = timeit.default_timer()
         print('Time in minutes: ', (stop - start) / 60)
@@ -132,7 +142,7 @@ def main():
 def cluster_tweets(clustering_method, old_preds, texts):
     cluster_representative = get_cluster_representative_text(old_preds, texts)
     # X = sentence_transformer.encode(list(representative_m.values()))
-    X = tf_idf_vecs(cluster_representative.values(), max_features=5000)
+    X = tf_idf_vecs(cluster_representative.values(), max_features=None)
     cluster_start = timeit.default_timer()
     clustering = clustering_method.fit(X)
     sub_preds = clustering.labels_

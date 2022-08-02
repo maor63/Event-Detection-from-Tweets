@@ -135,7 +135,6 @@ def create_labels_file(start_date_str, end_date_str):
             for tweet_json in tweet_jsons:
                 if tweet_json['tweet_id'] in tweet_with_labels:
                     relevant_tweet_ids.add(tweet_json['tweet_id'])
-            pass
         current_date = current_date + datetime.timedelta(days=1)
 
     start_str = start_date.strftime("%Y-%m-%d")
@@ -145,7 +144,7 @@ def create_labels_file(start_date_str, end_date_str):
         sep='\t', header=None, index=False)
 
 
-def load_event_files(start_date_str='2012-10-11', end_date_str='2012-10-22', folder_name='results'):
+def load_event_files(start_date_str='2012-10-11', end_date_str='2012-10-22', folder_name='results', event_file='events.csv'):
     start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d")
     end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d")
     day_count = (end_date - start_date).days
@@ -157,7 +156,7 @@ def load_event_files(start_date_str='2012-10-11', end_date_str='2012-10-22', fol
     dfs = []
     for d in range(day_count):
         date_str = current_date.strftime("%Y-%m-%d")
-        results_df = pd.read_csv(f'{folder_name}/{date_str}/events.csv').drop_duplicates(['tweet_id'])
+        results_df = pd.read_csv(f'{folder_name}/{date_str}/{event_file}').drop_duplicates(['tweet_id'])
         current_date = current_date + datetime.timedelta(days=1)
         dfs.append(results_df)
     return pd.concat(dfs, axis=0)
@@ -200,7 +199,8 @@ tweets_with_label = pd.read_csv(f'event_2012_relevant_tweets_{start_date_str}_{e
 # tweets_with_label = tweets_with_label.drop_duplicates()
 # results_df = pd.read_csv('results/2012-10-10/events.csv')
 results_df = load_event_files(start_date_str=start_date_str, end_date_str=end_date_str,
-                              folder_name='ensemble_kmeans_2000_DBSCAN_0-4')
+                              folder_name='ensemble_lsh0-7_kmeans',
+                              event_file='events_n_clusters2000.csv')
 results_df = results_df.drop_duplicates(['tweet_id'], keep='first')
 tweet_ids = results_df['tweet_id'].astype(str)
 new_preds2 = results_df['label']
